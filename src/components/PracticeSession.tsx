@@ -21,6 +21,10 @@ const PracticeSession: React.FC = () => {
   const [hoveredCard, setHoveredCard] = useState<number | null>(null);
   const [selectedCard, setSelectedCard] = useState<number | null>(null);
 
+  function onBack() {
+    setSelectedCard(null);
+  }
+
   const practiceCards: PracticeCard[] = [
     {
       title: "Mock Interviews",
@@ -91,10 +95,10 @@ const PracticeSession: React.FC = () => {
       </div>
     );
   if (selectedCard === 0) {
-    return <MockInterviewPractice />;
+    return <MockInterviewPractice onBack={onBack} />;
   }
   if (selectedCard === 1) {
-    return <ImpromptuSpeakingPractice />;
+    return <ImpromptuSpeakingPractice onBack={onBack} />;
   }
   if (selectedCard === 2) {
     return (

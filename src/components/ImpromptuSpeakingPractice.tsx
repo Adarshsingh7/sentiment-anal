@@ -1,165 +1,525 @@
-import React, { useState, useRef } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import React, { useState, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { Check, LucideCross, Mic, StopCircle, Upload } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Timer, Mic, MoveLeft, Pause, Play } from "lucide-react";
+import AudioPlayer from "./AudioPlayer";
 
-const ImpromptuSpeakingPractice: React.FC = () => {
-  const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
-  const [preparationTime, setPreparationTime] = useState(30);
-  const [speakingTime, setSpeakingTime] = useState(60);
+// Types for Interview Data
+interface InterviewQuestion {
+  question: string;
+}
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+interface InterviewCategory {
+  name: string;
+  questions: InterviewQuestion[];
+}
+
+// Interview Data
+const INTERVIEW_DATA: Record<string, InterviewCategory> = {
+  HR: {
+    name: "HR Interview",
+    questions: [
+      { question: "Tell me about yourself." },
+      { question: "What are your greatest strengths?" },
+      { question: "Why do you want to work here?" },
+      {
+        question:
+          "Describe a challenging work situation and how you overcame it.",
+      },
+    ],
+  },
+  DSA: {
+    name: "DSA Interview",
+    questions: [
+      { question: "Explain the two-pointer technique in array problems." },
+      { question: "How would you optimize an O(n²) algorithm?" },
+      { question: "Describe the difference between stack and queue." },
+      { question: "Implement a binary search algorithm conceptually." },
+    ],
+  },
+  INTRO: {
+    name: "Intro Interview",
+    questions: [
+      { question: "What are your career goals?" },
+      { question: "How did you get interested in your field?" },
+      { question: "Describe a project you're proud of." },
+      { question: "What motivates you professionally?" },
+    ],
+  },
+};
+
+const MockInterviewApp: React.FC<{ onBack: () => void }> = ({ onBack }) => {
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState<number>(0);
+  const [timeRemaining, setTimeRemaining] = useState<number>(60);
+  const [isInterviewStarted, setIsInterviewStarted] = useState<boolean>(false);
+  const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(
+    null,
+  );
+  const [interviewCompleted, setInterviewCompleted] = useState<boolean>(false);
+  const [recordings, setRecordings] = useState<Blob[]>([]);
+  const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [isPaused, setIsPaused] = useState<boolean>(false);
+  const [isHoveringRecord, setIsHoveringRecord] = useState<boolean>(false);
+  const [showCancelDialog, setShowCancelDialog] = useState<boolean>(false);
+
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
 
-  const topics = [
-    "Climate Change Effects",
-    "Artificial Intelligence Future",
-    "Social Media Addiction",
-    "Mental Health Matters",
-    "Sustainable Energy Solutions",
-  ];
-
-  const handleTopicSelect = (topic: string) => {
-    setSelectedTopic(topic);
-    // Reset states when a new topic is selected
-    setPreparationTime(30);
-    setSpeakingTime(60);
-    setAudioBlob(null);
-    audioChunksRef.current = [];
-  };
-
-  const startRecording = async () => {
+  // Start Interview
+  const startInterview = useCallback(async (category: string) => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream);
+      // Request microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
+      mediaStreamRef.current = stream;
 
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
+      // Create media recorder
+      const recorder = new MediaRecorder(stream);
+      setMediaRecorder(recorder);
+
+      // Reset state
+      setSelectedCategory(category);
+      setCurrentQuestionIndex(0);
+      setRecordings(
+        new Array(INTERVIEW_DATA[category].questions.length).fill(null),
+      );
+
+      // Setup recording handlers
+      recorder.ondataavailable = (e) => {
+        audioChunksRef.current.push(e.data);
       };
 
-      mediaRecorderRef.current.onstop = () => {
+      recorder.onstop = () => {
         const audioBlob = new Blob(audioChunksRef.current, {
           type: "audio/webm",
         });
-        setAudioBlob(audioBlob);
+        updateRecording(currentQuestionIndex, audioBlob);
         audioChunksRef.current = [];
       };
 
-      mediaRecorderRef.current.start();
+      // Start recording
+      recorder.start();
       setIsRecording(true);
-    } catch (error) {
-      console.error("Error accessing microphone:", error);
-    }
-  };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
+      // Start timer
+      timerRef.current = setInterval(() => {
+        setTimeRemaining((prev) => {
+          if (prev <= 1) {
+            moveToNextQuestion();
+            return 60;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      setIsInterviewStarted(true);
+    } catch (error) {
+      console.error("Microphone access error:", error);
+      alert("Please allow microphone access to start the interview.");
+    }
+  }, []);
+
+  // Update recording for a specific question
+  const updateRecording = useCallback(
+    (questionIndex: number, audioBlob: Blob) => {
+      setRecordings((prev) => {
+        const newRecordings = [...prev];
+        newRecordings[questionIndex] = audioBlob;
+        return newRecordings;
+      });
+    },
+    [],
+  );
+
+  // Pause/Resume Recording
+  const togglePauseResume = useCallback(() => {
+    if (mediaRecorder) {
+      if (isPaused) {
+        mediaRecorder.resume();
+        setIsPaused(false);
+
+        // Resume timer
+        timerRef.current = setInterval(() => {
+          setTimeRemaining((prev) => {
+            if (prev <= 1) {
+              moveToNextQuestion();
+              return 60;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+      } else {
+        mediaRecorder.pause();
+        setIsPaused(true);
+
+        // Pause timer
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+        }
+      }
+    }
+  }, [mediaRecorder, isPaused]);
+
+  // Move to Previous Question
+  const moveToPreviousQuestion = useCallback(() => {
+    // Stop current recording
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      mediaRecorder.stop();
       setIsRecording(false);
     }
-  };
 
-  const cancelRecording = () => {
-    console.log("Recording canceled");
-    if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.stop();
+    // Move to previous question
+    if (currentQuestionIndex > 0) {
+      setCurrentQuestionIndex((prev) => prev - 1);
+
+      // Restart recording after a short delay
+      setTimeout(async () => {
+        try {
+          // Stop and close existing stream if any
+          if (mediaStreamRef.current) {
+            mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+          }
+
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+          });
+          mediaStreamRef.current = stream;
+
+          const newRecorder = new MediaRecorder(stream);
+
+          newRecorder.ondataavailable = (e) => {
+            audioChunksRef.current.push(e.data);
+          };
+
+          newRecorder.onstop = () => {
+            const audioBlob = new Blob(audioChunksRef.current, {
+              type: "audio/webm",
+            });
+            updateRecording(currentQuestionIndex - 1, audioBlob);
+            audioChunksRef.current = [];
+          };
+
+          newRecorder.start();
+          setMediaRecorder(newRecorder);
+          setIsRecording(true);
+          setTimeRemaining(60);
+          setIsPaused(false);
+        } catch (error) {
+          console.error("Error restarting recording:", error);
+        }
+      }, 500);
     }
-    setAudioBlob(null);
-    setPreparationTime(30);
-    setIsRecording(false);
-  };
+  }, [currentQuestionIndex, updateRecording]);
 
-  const submitRecording = () => {
-    if (audioBlob) {
-      console.log("Recorded Audio Blob:", audioBlob);
-      // Here you can add further logic like uploading the blob
+  // Move to Next Question
+  const moveToNextQuestion = useCallback(() => {
+    // Stop current recording
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      mediaRecorder.stop();
+      setIsRecording(false);
+    }
+
+    // Move to next question
+    if (
+      selectedCategory &&
+      currentQuestionIndex <
+        INTERVIEW_DATA[selectedCategory].questions.length - 1
+    ) {
+      setCurrentQuestionIndex((prev) => prev + 1);
+
+      // Restart recording after a short delay
+      setTimeout(async () => {
+        try {
+          // Stop and close existing stream if any
+          if (mediaStreamRef.current) {
+            mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+          }
+
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+          });
+          mediaStreamRef.current = stream;
+
+          const newRecorder = new MediaRecorder(stream);
+
+          newRecorder.ondataavailable = (e) => {
+            audioChunksRef.current.push(e.data);
+          };
+
+          newRecorder.onstop = () => {
+            const audioBlob = new Blob(audioChunksRef.current, {
+              type: "audio/webm",
+            });
+            updateRecording(currentQuestionIndex, audioBlob);
+            audioChunksRef.current = [];
+          };
+
+          newRecorder.start();
+          setMediaRecorder(newRecorder);
+          setIsRecording(true);
+          setTimeRemaining(60);
+          setIsPaused(false);
+        } catch (error) {
+          console.error("Error restarting recording:", error);
+        }
+      }, 500);
     } else {
-      console.log("okay");
+      // Interview completed
+      if (timerRef.current) clearInterval(timerRef.current);
+      setIsInterviewStarted(false);
     }
+  }, [selectedCategory, currentQuestionIndex, updateRecording]);
+
+  // Submit Interview
+  const submitInterview = () => {
+    // Ensure last question's recording is captured
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      mediaRecorder.stop();
+      setIsRecording(false);
+    }
+
+    // Stop and close stream
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+    }
+
+    // Clear timer
+    if (timerRef.current) clearInterval(timerRef.current);
+
+    setInterviewCompleted(true);
+
+    // Process recordings
+    console.log("Recorded Responses:", recordings);
+    alert("Interview Submitted! Check console for recordings.");
+
+    // Reset interview state
+    setIsInterviewStarted(false);
   };
 
-  const VoiceInsightComponent = () => (
-    <Card className="mt-6 w-full">
-      <CardHeader>
-        <CardTitle className="flex items-center justify-between">
-          <span>Voice Insight</span>
-          <div className="flex space-x-2">
-            {!isRecording && !audioBlob ? (
-              <Button variant="default" size="sm" onClick={startRecording}>
-                <Mic className="mr-2 h-4 w-4" /> Start Recording
-              </Button>
-            ) : isRecording ? (
-              <Button variant="destructive" size="sm" onClick={stopRecording}>
-                <StopCircle className="mr-2 h-4 w-4" /> Stop Recording
-              </Button>
-            ) : (
-              <div className="flex flex-row gap-5">
-                <Button variant="default" size="sm" onClick={submitRecording}>
-                  <Upload className="mr-2 h-4 w-4" /> Submit Recording
-                </Button>
+  // Cancel Interview
+  const cancelInterview = () => {
+    // Stop recording
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      mediaRecorder.stop();
+    }
 
-                <Button variant="default" size="sm" onClick={cancelRecording}>
-                  <LucideCross className="mr-2 h-4 w-4" />
-                  Cancel
-                </Button>
+    // Stop and close stream
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+    }
+
+    // Clear timer
+    if (timerRef.current) clearInterval(timerRef.current);
+
+    // Reset all states
+    setSelectedCategory(null);
+    setCurrentQuestionIndex(0);
+    setTimeRemaining(60);
+    setIsInterviewStarted(false);
+    setIsRecording(false);
+    setRecordings([]);
+  };
+
+  if (interviewCompleted) {
+    return (
+      <div>
+        <Button onClick={onBack}>
+          <MoveLeft className="h-8 w-8" />
+          Back
+        </Button>
+        Interview Completed!
+        <div>
+          {recordings
+            .filter((rec) => rec)
+            .map((recording, index) => (
+              <div key={index}>
+                <AudioPlayer audioBlob={recording} />
+              </div>
+            ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Render Categories or Interview
+  if (!isInterviewStarted) {
+    return (
+      <div className="container mx-auto px-4 py-8 max-w-2xl">
+        <Button onClick={onBack}>
+          <MoveLeft className="h-8 w-8" />
+          Back
+        </Button>
+        <h1 className="text-2xl font-bold text-center mb-6">
+          Mock Interview Simulator
+        </h1>
+        <div className="grid md:grid-cols-3 gap-4">
+          {Object.keys(INTERVIEW_DATA).map((category) => (
+            <Card
+              key={category}
+              className="cursor-pointer hover:bg-accent"
+              onClick={() => startInterview(category)}
+            >
+              <CardHeader>
+                <CardTitle>{INTERVIEW_DATA[category].name}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-muted-foreground">
+                  {INTERVIEW_DATA[category].questions.length} Questions
+                </p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Interview in Progress
+  return (
+    <div className="container mx-auto px-4 py-8 max-w-2xl">
+      <Card>
+        {/* <Button onClick={onBack}>
+          <MoveLeft className="h-8 w-8" />
+          Back
+        </Button> */}
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => setShowCancelDialog(true)}
+            >
+              <MoveLeft className="h-4 w-4" />
+            </Button>
+            <div>
+              <CardTitle>{INTERVIEW_DATA[selectedCategory!].name}</CardTitle>
+              <p className="text-muted-foreground flex items-center">
+                <Timer className="mr-2 h-4 w-4" />
+                {timeRemaining} seconds remaining
+              </p>
+            </div>
+          </div>
+          <div
+            className={`relative ${isRecording && !isPaused ? "animate-pulse" : ""}`}
+            onMouseEnter={() => setIsHoveringRecord(true)}
+            onMouseLeave={() => setIsHoveringRecord(false)}
+          >
+            <Mic
+              className={`h-6 w-6 ${
+                isRecording
+                  ? isPaused
+                    ? "text-yellow-500"
+                    : "text-red-500"
+                  : "text-gray-500"
+              }`}
+            />
+            {isHoveringRecord && (
+              <div
+                className="absolute z-10 top-full left-1/2 transform -translate-x-1/2 mt-2
+                bg-black text-white text-xs px-2 py-1 rounded"
+              >
+                {isRecording
+                  ? isPaused
+                    ? "Paused"
+                    : "Recording Active"
+                  : "Start Recording"}
               </div>
             )}
           </div>
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <p className="text-sm font-semibold">Preparation Time</p>
-            <div className="flex items-center space-x-2 mt-2">
-              <span>{preparationTime} seconds</span>
-            </div>
-          </div>
-          <div>
-            <p className="text-sm font-semibold">Speaking Time</p>
-            <div className="flex items-center space-x-2 mt-2">
-              <span>{speakingTime} seconds</span>
-            </div>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-
-  return (
-    <div className="container mx-auto p-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Impromptu Speaking Practice</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {topics.map((topic) => (
-              <Button
-                key={topic}
-                variant={selectedTopic === topic ? "default" : "outline"}
-                className={`w-full justify-between ${
-                  selectedTopic === topic
-                    ? "bg-primary text-primary-foreground"
-                    : "hover:bg-accent"
-                }`}
-                onClick={() => handleTopicSelect(topic)}
-              >
-                {topic}
-                {selectedTopic === topic && <Check className="ml-2 h-4 w-4" />}
-              </Button>
-            ))}
-          </div>
+          <div className="text-center space-y-4">
+            <h2 className="text-lg font-semibold">
+              {
+                INTERVIEW_DATA[selectedCategory!].questions[
+                  currentQuestionIndex
+                ].question
+              }
+            </h2>
 
-          {selectedTopic && <VoiceInsightComponent />}
+            <div className="flex justify-center space-x-4">
+              <Button
+                variant="outline"
+                onClick={moveToPreviousQuestion}
+                disabled={currentQuestionIndex <= 0}
+              >
+                Previous Question
+              </Button>
+
+              {isRecording ? (
+                <Button
+                  variant={isPaused ? "default" : "destructive"}
+                  onClick={togglePauseResume}
+                >
+                  {isPaused ? (
+                    <>
+                      <Play className="mr-2 h-4 w-4" />
+                      Resume
+                    </>
+                  ) : (
+                    <>
+                      <Pause className="mr-2 h-4 w-4" />
+                      Pause
+                    </>
+                  )}
+                </Button>
+              ) : null}
+
+              <Button
+                variant="outline"
+                onClick={moveToNextQuestion}
+                disabled={
+                  currentQuestionIndex >=
+                  INTERVIEW_DATA[selectedCategory!].questions.length - 1
+                }
+              >
+                Next Question
+              </Button>
+
+              {currentQuestionIndex ===
+                INTERVIEW_DATA[selectedCategory!].questions.length - 1 && (
+                <Button variant="default" onClick={submitInterview}>
+                  Submit Interview
+                </Button>
+              )}
+            </div>
+          </div>
         </CardContent>
       </Card>
+
+      {/* Cancel Interview Dialog */}
+      <AlertDialog open={showCancelDialog} onOpenChange={setShowCancelDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel Interview?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to cancel the interview? All your current
+              progress will be lost.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>No, Continue</AlertDialogCancel>
+            <AlertDialogAction onClick={cancelInterview}>
+              Yes, Cancel Interview
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
 
-export default ImpromptuSpeakingPractice;
+export default MockInterviewApp;

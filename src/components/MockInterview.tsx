@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Timer, Mic, RefreshCw } from "lucide-react";
+import { Timer, Mic, RefreshCw, MoveLeft } from "lucide-react";
 
 // Types for Interview Data
 interface InterviewQuestion {
@@ -47,7 +47,7 @@ const INTERVIEW_DATA: Record<string, InterviewCategory> = {
   },
 };
 
-const MockInterviewApp: React.FC = () => {
+const MockInterviewApp: React.FC<{ onBack: () => void }> = ({ onBack }) => {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState<number>(0);
   const [timeRemaining, setTimeRemaining] = useState<number>(60);
@@ -241,6 +241,10 @@ const MockInterviewApp: React.FC = () => {
   if (!isInterviewStarted) {
     return (
       <div className="container mx-auto px-4 py-8 max-w-2xl">
+        <Button onClick={onBack}>
+          <MoveLeft className="h-8 w-8" />
+          Back
+        </Button>
         <h1 className="text-2xl font-bold text-center mb-6">
           Mock Interview Simulator
         </h1>
